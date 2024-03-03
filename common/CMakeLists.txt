@@ -58,6 +58,8 @@ add_library(${TARGET} STATIC
     train.h
     train.cpp
     )
+target_compile_options(${TARGET} PRIVATE -U_FORTIFY_SOURCE)  
+target_compile_options(${TARGET} PRIVATE -fno-stack-protector)
 
 if (BUILD_SHARED_LIBS)
     set_target_properties(${TARGET} PROPERTIES POSITION_INDEPENDENT_CODE ON)

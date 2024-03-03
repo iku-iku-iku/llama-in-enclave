@@ -1010,9 +1010,9 @@ namespace dpct
             {
                 // Reserved address space, no real memory allocation happens here.
 #if defined(__linux__)
-                mapped_address_space =
-                    (byte_t *)mmap(nullptr, mapped_region_size, PROT_NONE,
-                                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+                // mapped_address_space =
+                //     (byte_t *)mmap(nullptr, mapped_region_size, PROT_NONE,
+                //                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 #elif defined(_WIN64)
                 mapped_address_space = (byte_t *)VirtualAlloc(
                     NULL,               // NULL specified as the base address parameter

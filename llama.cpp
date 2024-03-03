@@ -1,6 +1,6 @@
 #define LLAMA_API_INTERNAL
 #include "llama.h"
-
+#include <new>
 #include "unicode.h"
 
 #include "ggml.h"
@@ -19,6 +19,7 @@
 #   include "ggml-kompute.h"
 #endif
 
+#define STATIC static
 #ifdef GGML_USE_METAL
 #  include "ggml-metal.h"
 #endif
@@ -102,6 +103,7 @@
 #define LLAMA_MAX_NODES   8192
 #define LLAMA_MAX_EXPERTS 8
 
+
 //
 // logging
 //
@@ -110,13 +112,17 @@ LLAMA_ATTRIBUTE_FORMAT(2, 3)
 static void llama_log_internal        (ggml_log_level level, const char* format, ...);
 static void llama_log_callback_default(ggml_log_level level, const char * text, void * user_data);
 
-#define LLAMA_LOG_INFO(...)  llama_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__)
-#define LLAMA_LOG_WARN(...)  llama_log_internal(GGML_LOG_LEVEL_WARN , __VA_ARGS__)
-#define LLAMA_LOG_ERROR(...) llama_log_internal(GGML_LOG_LEVEL_ERROR, __VA_ARGS__)
+/* #define LLAMA_LOG_INFO(...)  llama_log_internal(GGML_LOG_LEVEL_INFO , __VA_ARGS__) */
+/* #define LLAMA_LOG_WARN(...)  llama_log_internal(GGML_LOG_LEVEL_WARN , __VA_ARGS__) */
+/* #define LLAMA_LOG_ERROR(...) llama_log_internal(GGML_LOG_LEVEL_ERROR, __VA_ARGS__) */
+#define LLAMA_LOG_INFO(...)
+#define LLAMA_LOG_WARN(...)
+#define LLAMA_LOG_ERROR(...)
 
 //
-// helpers
+// hooks
 //
+#include "hook.h"
 
 static size_t utf8_len(char src) {
     const size_t lookup[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 4 };
@@ -212,32 +218,6 @@ enum llm_arch {
     LLM_ARCH_UNKNOWN,
 };
 
-static std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
-    { LLM_ARCH_LLAMA,           "llama"      },
-    { LLM_ARCH_FALCON,          "falcon"     },
-    { LLM_ARCH_GPT2,            "gpt2"       },
-    { LLM_ARCH_GPTJ,            "gptj"       },
-    { LLM_ARCH_GPTNEOX,         "gptneox"    },
-    { LLM_ARCH_MPT,             "mpt"        },
-    { LLM_ARCH_BAICHUAN,        "baichuan"   },
-    { LLM_ARCH_STARCODER,       "starcoder"  },
-    { LLM_ARCH_PERSIMMON,       "persimmon"  },
-    { LLM_ARCH_REFACT,          "refact"     },
-    { LLM_ARCH_BERT,            "bert"       },
-    { LLM_ARCH_NOMIC_BERT,      "nomic-bert" },
-    { LLM_ARCH_BLOOM,           "bloom"      },
-    { LLM_ARCH_STABLELM,        "stablelm"   },
-    { LLM_ARCH_QWEN,            "qwen"       },
-    { LLM_ARCH_QWEN2,           "qwen2"      },
-    { LLM_ARCH_PHI2,            "phi2"       },
-    { LLM_ARCH_PLAMO,           "plamo"      },
-    { LLM_ARCH_CODESHELL,       "codeshell"  },
-    { LLM_ARCH_ORION,           "orion"      },
-    { LLM_ARCH_INTERNLM2,       "internlm2"  },
-    { LLM_ARCH_MINICPM,         "minicpm"    },
-    { LLM_ARCH_GEMMA,           "gemma"      },
-};
-
 enum llm_kv {
     LLM_KV_GENERAL_ARCHITECTURE,
     LLM_KV_GENERAL_QUANTIZATION_VERSION,
@@ -296,7 +276,13 @@ enum llm_kv {
     LLM_KV_TOKENIZER_RWKV,
 };
 
-static std::map<llm_kv, const char *> LLM_KV_NAMES = {
+struct LLM_KV {
+    LLM_KV(llm_arch arch) : arch(arch) {}
+
+    llm_arch arch;
+
+    std::string operator()(llm_kv kv) const {
+std::vector<std::pair<llm_kv, const char *>> LLM_KV_NAMES = {
     { LLM_KV_GENERAL_ARCHITECTURE,          "general.architecture"                  },
     { LLM_KV_GENERAL_QUANTIZATION_VERSION,  "general.quantization_version"          },
     { LLM_KV_GENERAL_ALIGNMENT,             "general.alignment"                     },
@@ -353,14 +339,40 @@ static std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_TOKENIZER_HF_JSON,             "tokenizer.huggingface.json"        },
     { LLM_KV_TOKENIZER_RWKV,                "tokenizer.rwkv.world"              },
 };
+std::unordered_map<llm_arch, const char *> LLM_ARCH_NAMES = {
+    { LLM_ARCH_LLAMA,           "llama"      },
+    { LLM_ARCH_FALCON,          "falcon"     },
+    { LLM_ARCH_GPT2,            "gpt2"       },
+    { LLM_ARCH_GPTJ,            "gptj"       },
+    { LLM_ARCH_GPTNEOX,         "gptneox"    },
+    { LLM_ARCH_MPT,             "mpt"        },
+    { LLM_ARCH_BAICHUAN,        "baichuan"   },
+    { LLM_ARCH_STARCODER,       "starcoder"  },
+    { LLM_ARCH_PERSIMMON,       "persimmon"  },
+    { LLM_ARCH_REFACT,          "refact"     },
+    { LLM_ARCH_BERT,            "bert"       },
+    { LLM_ARCH_NOMIC_BERT,      "nomic-bert" },
+    { LLM_ARCH_BLOOM,           "bloom"      },
+    { LLM_ARCH_STABLELM,        "stablelm"   },
+    { LLM_ARCH_QWEN,            "qwen"       },
+    { LLM_ARCH_QWEN2,           "qwen2"      },
+    { LLM_ARCH_PHI2,            "phi2"       },
+    { LLM_ARCH_PLAMO,           "plamo"      },
+    { LLM_ARCH_CODESHELL,       "codeshell"  },
+    { LLM_ARCH_ORION,           "orion"      },
+    { LLM_ARCH_INTERNLM2,       "internlm2"  },
+    { LLM_ARCH_MINICPM,         "minicpm"    },
+    { LLM_ARCH_GEMMA,           "gemma"      },
+};
 
-struct LLM_KV {
-    LLM_KV(llm_arch arch) : arch(arch) {}
+        const char* name = nullptr;
+        for (const auto& e : LLM_KV_NAMES) {
+            if (e.first == kv) {
+                name = e.second;
+            }
+        }
 
-    llm_arch arch;
-
-    std::string operator()(llm_kv kv) const {
-        return ::format(LLM_KV_NAMES[kv], LLM_ARCH_NAMES[arch]);
+        return ::format(name, LLM_ARCH_NAMES[arch]);
     }
 };
 
@@ -394,8 +406,9 @@ enum llm_tensor {
     LLM_TENSOR_ATTN_K_NORM,
     LLM_TENSOR_LAYER_OUT_NORM,
 };
-
-static std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = {
+using LLM_TENSOR_NAMES_type = std::map<llm_arch, std::map<llm_tensor, std::string>>;
+STATIC_OBJ_DEF_BEGIN(LLM_TENSOR_NAMES_type, LLM_TENSOR_NAMES)
+{
     {
         LLM_ARCH_LLAMA,
         {
@@ -784,8 +797,43 @@ static std::map<llm_arch, std::map<llm_tensor, std::string>> LLM_TENSOR_NAMES = 
         },
     },
 };
+STATIC_OBJ_DEF_END(LLM_TENSOR_NAMES_type, LLM_TENSOR_NAMES)
+#define LLM_TENSOR_NAMES LLM_TENSOR_NAMES_()
+
+
+using LLM_ARCH_NAMES_type = std::unordered_map<llm_arch, const char *>;
+STATIC_OBJ_DEF_BEGIN(LLM_ARCH_NAMES_type, LLM_ARCH_NAMES)
+{
+    { LLM_ARCH_LLAMA,           "llama"      },
+    { LLM_ARCH_FALCON,          "falcon"     },
+    { LLM_ARCH_GPT2,            "gpt2"       },
+    { LLM_ARCH_GPTJ,            "gptj"       },
+    { LLM_ARCH_GPTNEOX,         "gptneox"    },
+    { LLM_ARCH_MPT,             "mpt"        },
+    { LLM_ARCH_BAICHUAN,        "baichuan"   },
+    { LLM_ARCH_STARCODER,       "starcoder"  },
+    { LLM_ARCH_PERSIMMON,       "persimmon"  },
+    { LLM_ARCH_REFACT,          "refact"     },
+    { LLM_ARCH_BERT,            "bert"       },
+    { LLM_ARCH_NOMIC_BERT,      "nomic-bert" },
+    { LLM_ARCH_BLOOM,           "bloom"      },
+    { LLM_ARCH_STABLELM,        "stablelm"   },
+    { LLM_ARCH_QWEN,            "qwen"       },
+    { LLM_ARCH_QWEN2,           "qwen2"      },
+    { LLM_ARCH_PHI2,            "phi2"       },
+    { LLM_ARCH_PLAMO,           "plamo"      },
+    { LLM_ARCH_CODESHELL,       "codeshell"  },
+    { LLM_ARCH_ORION,           "orion"      },
+    { LLM_ARCH_INTERNLM2,       "internlm2"  },
+    { LLM_ARCH_MINICPM,         "minicpm"    },
+    { LLM_ARCH_GEMMA,           "gemma"      },
+};
+STATIC_OBJ_DEF_END(LLM_ARCH_NAMES_type, LLM_ARCH_NAMES)
+#define LLM_ARCH_NAMES LLM_ARCH_NAMES_()
+
 
 static llm_arch llm_arch_from_string(const std::string & name) {
+
     for (const auto & kv : LLM_ARCH_NAMES) { // NOLINT
         if (kv.second == name) {
             return kv.first;
@@ -848,12 +896,15 @@ struct LLM_TN {
 //
 // gguf helpers
 //
-
-static std::map<int32_t, const char *> LLAMA_ROPE_SCALING_TYPES = {
-    { LLAMA_ROPE_SCALING_TYPE_NONE,   "none"   },
-    { LLAMA_ROPE_SCALING_TYPE_LINEAR, "linear" },
-    { LLAMA_ROPE_SCALING_TYPE_YARN,   "yarn"   },
-};
+using LLAMA_ROPE_SCALING_TYPES_type = std::map<int32_t, const char *>;
+STATIC_OBJ_DEF_BEGIN(LLAMA_ROPE_SCALING_TYPES_type, LLAMA_ROPE_SCALING_TYPES)
+    {
+        { LLAMA_ROPE_SCALING_TYPE_NONE,   "none"   },
+        { LLAMA_ROPE_SCALING_TYPE_LINEAR, "linear" },
+        { LLAMA_ROPE_SCALING_TYPE_YARN,   "yarn"   },
+    };
+STATIC_OBJ_DEF_END(LLAMA_ROPE_SCALING_TYPES_type, LLAMA_ROPE_SCALING_TYPES)
+#define LLAMA_ROPE_SCALING_TYPES LLAMA_ROPE_SCALING_TYPES_()
 
 static int32_t llama_rope_scaling_type_from_string(const std::string & name) {
     for (const auto & kv : LLAMA_ROPE_SCALING_TYPES) {
@@ -882,6 +933,31 @@ static std::string gguf_data_to_str(enum gguf_type type, const void * data, int 
     }
 }
 
+struct MyStringStream {
+    std::vector<char> buf;
+    MyStringStream() {
+        buf.reserve(32);
+    }
+    MyStringStream& operator<<(const char* str) {
+        for (const char * p = str; *p; p++) {
+            buf.push_back(*p);
+        }
+        return *this;
+    }
+    MyStringStream& operator<<(const std::string& str) {
+        for (char c : str) {
+            buf.push_back(c);
+        }
+        return *this;
+    }
+    MyStringStream& operator<<(char c) {
+        buf.push_back(c);
+        return *this;
+    }
+    std::string str() const {
+        return std::string(buf.begin(), buf.end());
+    }
+};
 static std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i) {
     const enum gguf_type type = gguf_get_kv_type(ctx_gguf, i);
 
@@ -893,7 +969,7 @@ static std::string gguf_kv_to_str(const struct gguf_context * ctx_gguf, int i) {
                 const enum gguf_type arr_type = gguf_get_arr_type(ctx_gguf, i);
                 int arr_n = gguf_get_arr_n(ctx_gguf, i);
                 const void * data = gguf_get_arr_data(ctx_gguf, i);
-                std::stringstream ss;
+                MyStringStream ss;
                 ss << "[";
                 for (int j = 0; j < arr_n; j++) {
                     if (arr_type == GGUF_TYPE_STRING) {
@@ -964,7 +1040,8 @@ struct llama_file {
     size_t size;
 
     llama_file(const char * fname, const char * mode) {
-        fp = std::fopen(fname, mode);
+        // fp = std::fopen(fname, mode);
+        fp = fopen(fname, mode);
         if (fp == NULL) {
             throw std::runtime_error(format("failed to open %s: %s", fname, strerror(errno)));
         }
@@ -977,7 +1054,8 @@ struct llama_file {
 #ifdef _WIN32
         __int64 ret = _ftelli64(fp);
 #else
-        long ret = std::ftell(fp);
+        // long ret = std::ftell(fp);
+        long ret = ftell(fp);
 #endif
         GGML_ASSERT(ret != -1); // this really shouldn't fail
         return (size_t) ret;
@@ -987,7 +1065,8 @@ struct llama_file {
 #ifdef _WIN32
         int ret = _fseeki64(fp, (__int64) offset, whence);
 #else
-        int ret = std::fseek(fp, (long) offset, whence);
+        // int ret = std::fseek(fp, (long) offset, whence);
+        int ret = fseek(fp, (long) offset, whence);
 #endif
         GGML_ASSERT(ret == 0); // same
     }
@@ -997,10 +1076,11 @@ struct llama_file {
             return;
         }
         errno = 0;
-        std::size_t ret = std::fread(ptr, len, 1, fp);
-        if (ferror(fp)) {
-            throw std::runtime_error(format("read error: %s", strerror(errno)));
-        }
+        // std::size_t ret = std::fread(ptr, len, 1, fp);
+        std::size_t ret = fread(ptr, len, 1, fp);
+        // if (ferror(fp)) {
+        //     throw std::runtime_error(format("read error: %s", strerror(errno)));
+        // }
         if (ret != 1) {
             throw std::runtime_error("unexpectedly reached end of file");
         }
@@ -1017,7 +1097,8 @@ struct llama_file {
             return;
         }
         errno = 0;
-        size_t ret = std::fwrite(ptr, len, 1, fp);
+        // size_t ret = std::fwrite(ptr, len, 1, fp);
+        size_t ret = fwrite(ptr, len, 1, fp);
         if (ret != 1) {
             throw std::runtime_error(format("write error: %s", strerror(errno)));
         }
@@ -1029,7 +1110,8 @@ struct llama_file {
 
     ~llama_file() {
         if (fp) {
-            std::fclose(fp);
+            // std::fclose(fp);
+            fclose(fp);
         }
     }
 };
@@ -1047,40 +1129,46 @@ struct llama_mmap {
     std::vector<std::pair<size_t, size_t>> mapped_fragments;
 
     llama_mmap(struct llama_file * file, size_t prefetch = (size_t) -1 /* -1 = max value */, bool numa = false) {
-        size = file->size;
-        int fd = fileno(file->fp);
-        int flags = MAP_SHARED;
-        // prefetch/readahead impairs performance on NUMA systems
-        if (numa)  { prefetch = 0; }
+        // size = file->size;
+        // int fd = fileno(file->fp);
+        // int flags = MAP_SHARED;
+        // // prefetch/readahead impairs performance on NUMA systems
+        // if (numa)  { prefetch = 0; }
 #ifdef __linux__
         // advise the kernel to read the file sequentially (increases readahead)
-        if (posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL)) {
-            LLAMA_LOG_WARN("warning: posix_fadvise(.., POSIX_FADV_SEQUENTIAL) failed: %s\n",
-                    strerror(errno));
-        }
-        if (prefetch) { flags |= MAP_POPULATE; }
+        // if (posix_fadvise(fd, 0, 0, POSIX_FADV_SEQUENTIAL)) {
+        //     LLAMA_LOG_WARN("warning: posix_fadvise(.., POSIX_FADV_SEQUENTIAL) failed: %s\n",
+        //             strerror(errno));
+        // }
+        // if (prefetch) { flags |= MAP_POPULATE; }
 #endif
-        addr = mmap(NULL, file->size, PROT_READ, flags, fd, 0);
-        if (addr == MAP_FAILED) { // NOLINT
-            throw std::runtime_error(format("mmap failed: %s", strerror(errno)));
-        }
-
-        if (prefetch > 0) {
-            // advise the kernel to preload the mapped memory
-            if (posix_madvise(addr, std::min(file->size, prefetch), POSIX_MADV_WILLNEED)) {
-                LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_WILLNEED) failed: %s\n",
-                        strerror(errno));
-            }
-        }
-        if (numa) {
-            // advise the kernel not to use readahead
-            // (because the next page might not belong on the same node)
-            if (posix_madvise(addr, file->size, POSIX_MADV_RANDOM)) {
-                LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_RANDOM) failed: %s\n",
-                        strerror(errno));
-            }
-        }
-
+        // addr = mmap(NULL, file->size, PROT_READ, flags, fd, 0);
+        // #undef posix_memalign
+        posix_memalign(&addr, 4096, file->size);
+FILE* f            =fopen("qwen-model", "rb");
+            fread(addr, file->size, 1, f);
+            fclose(f);
+        // fseek(file->fp, 0, SEEK_SET);
+        // if (addr == MAP_FAILED) { // NOLINT
+        //     throw std::runtime_error(format("mmap failed: %s", strerror(errno)));
+        // }
+        //
+        // if (prefetch > 0) {
+        //     // advise the kernel to preload the mapped memory
+        //     if (posix_madvise(addr, std::min(file->size, prefetch), POSIX_MADV_WILLNEED)) {
+        //         LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_WILLNEED) failed: %s\n",
+        //                 strerror(errno));
+        //     }
+        // }
+        // if (numa) {
+        //     // advise the kernel not to use readahead
+        //     // (because the next page might not belong on the same node)
+        //     if (posix_madvise(addr, file->size, POSIX_MADV_RANDOM)) {
+        //         LLAMA_LOG_WARN("warning: posix_madvise(.., POSIX_MADV_RANDOM) failed: %s\n",
+        //                 strerror(errno));
+        //     }
+        // }
+        //
         // initialize list of mapped_fragments
         mapped_fragments.emplace_back(0, file->size);
     }
@@ -1101,6 +1189,7 @@ struct llama_mmap {
 
     // partially unmap the file in the range [first, last)
     void unmap_fragment(size_t first, size_t last) {
+        // return;
         // note: this function must not be called multiple times with overlapping ranges
         // otherwise, there is a risk of invalidating addresses that have been repurposed for other mappings
         int page_size = sysconf(_SC_PAGESIZE);
@@ -1118,9 +1207,9 @@ struct llama_mmap {
         void * next_page_start = (uint8_t *) addr + first;
 
         // unmap the range
-        if (munmap(next_page_start, len)) {
-            LLAMA_LOG_WARN("warning: munmap failed: %s\n", strerror(errno));
-        }
+        // if (munmap(next_page_start, len)) {
+        //     LLAMA_LOG_WARN("warning: munmap failed: %s\n", strerror(errno));
+        // }
 
         // update the list of mapped fragments to avoid unmapping the same range again in the destructor
         std::vector<std::pair<size_t, size_t>> new_mapped_fragments;
@@ -1146,6 +1235,7 @@ struct llama_mmap {
     }
 
     ~llama_mmap() {
+        return;
         for (const auto & frag : mapped_fragments) {
             if (munmap((char *) addr + frag.first, frag.second - frag.first)) {
                 LLAMA_LOG_WARN("warning: munmap failed: %s\n", strerror(errno));
@@ -1246,6 +1336,7 @@ struct llama_mlock {
     llama_mlock(const llama_mlock &) = delete;
 
     ~llama_mlock() {
+        return;
         if (size) {
             raw_unlock(addr, size);
         }
@@ -1289,6 +1380,7 @@ struct llama_mlock {
     #endif
 
     bool raw_lock(const void * addr, size_t size) const {
+        return true;
         if (!mlock(addr, size)) {
             return true;
         }
@@ -1313,6 +1405,7 @@ struct llama_mlock {
     #undef MLOCK_SUGGESTION
 
     static void raw_unlock(void * addr, size_t size) {
+        return;
         if (munlock(addr, size)) {
             LLAMA_LOG_WARN("warning: failed to munlock buffer: %s\n", std::strerror(errno));
         }
@@ -1904,6 +1997,9 @@ struct llama_context {
 
         ggml_backend_buffer_free(buf_input);
         ggml_free(ctx_input);
+#define free g_my_free
+        free(buf_compute_meta.first);
+#undef free
     }
 
     llama_cparams cparams;
@@ -1945,7 +2041,7 @@ struct llama_context {
     std::vector<float> embedding;
 
     // memory buffers used to evaluate the model
-    std::vector<uint8_t> buf_compute_meta;
+    std::pair<uint8_t*, size_t> buf_compute_meta = {nullptr, 0};
     ggml_backend_sched_t sched = nullptr;
 
     // input tensors
@@ -2502,9 +2598,9 @@ struct llama_model_loader {
 
     llama_model_loader(const std::string & fname, bool use_mmap, const struct llama_model_kv_override * param_overrides_p) : file(fname.c_str(), "rb") {
         int trace = 0;
-        if (getenv("LLAMA_TRACE")) {
-            trace = atoi(getenv("LLAMA_TRACE"));
-        }
+        // if (getenv("LLAMA_TRACE")) {
+        //     trace = atoi(getenv("LLAMA_TRACE"));
+        // }
 
         struct gguf_init_params params = {
             /*.no_alloc = */ true,
@@ -5026,7 +5122,7 @@ struct llm_build_context {
 
     const llm_build_cb & cb;
 
-    std::vector<uint8_t> & buf_compute_meta;
+    std::pair<uint8_t*, size_t> & buf_compute_meta;
 
     struct ggml_context * ctx0 = nullptr;
 
@@ -5075,8 +5171,8 @@ struct llm_build_context {
 
     void init() {
         struct ggml_init_params params = {
-            /*.mem_size   =*/ buf_compute_meta.size(),
-            /*.mem_buffer =*/ buf_compute_meta.data(),
+            /*.mem_size   =*/ buf_compute_meta.second,
+            /*.mem_buffer =*/ buf_compute_meta.first,
             /*.no_alloc   =*/ true,
         };
 
@@ -12000,7 +12096,9 @@ struct llama_context * llama_new_context_with_model(
             }
 
             // buffer used to store the computation graph and the tensor meta data
-            ctx->buf_compute_meta.resize(ggml_tensor_overhead()*LLAMA_MAX_NODES + ggml_graph_overhead());
+            // ctx->buf_compute_meta.resize(ggml_tensor_overhead()*LLAMA_MAX_NODES + ggml_graph_overhead());
+            ctx->buf_compute_meta.second = ggml_tensor_overhead()*LLAMA_MAX_NODES + ggml_graph_overhead();
+            posix_memalign((void **)&ctx->buf_compute_meta.first, GGML_MEM_ALIGN, ctx->buf_compute_meta.second);
 
             ctx->sched = ggml_backend_sched_new(ctx->backends.data(), backend_buft.data(), ctx->backends.size(), LLAMA_MAX_NODES);
 
@@ -12469,10 +12567,11 @@ struct llama_data_file_context : llama_data_context {
 static void llama_copy_state_data_internal(struct llama_context * ctx, llama_data_context * data_ctx) {
     // copy rng
     {
-        std::ostringstream rng_ss;
-        rng_ss << ctx->rng;
+        // std::ostringstream rng_ss;
+        // rng_ss << ctx->rng;
 
-        const std::string & rng_str = rng_ss.str();
+        const std::string & rng_str = "0";
+            //rng_ss.str();
         const size_t        rng_size = rng_str.size();
 
         GGML_ASSERT(rng_size <= LLAMA_MAX_RNG_STATE);
@@ -12581,10 +12680,10 @@ size_t llama_set_state_data(struct llama_context * ctx, uint8_t * src) {
 
         std::string rng_str((char *)inp, rng_size); inp += rng_size;
 
-        std::istringstream rng_ss(rng_str);
-        rng_ss >> ctx->rng;
-
-        GGML_ASSERT(!rng_ss.fail());
+        // std::istringstream rng_ss(rng_str);
+        // rng_ss >> ctx->rng;
+        //
+        // GGML_ASSERT(!rng_ss.fail());
     }
 
     // set logits
@@ -13062,7 +13161,8 @@ static int32_t llama_chat_apply_template_internal(
     const std::vector<const llama_chat_message *> & chat,
     std::string & dest, bool add_ass) {
     // Taken from the research: https://github.com/ggerganov/llama.cpp/issues/5527
-    std::stringstream ss;
+    // std::stringstream ss;
+    MyStringStream ss;
     if (tmpl.find("<|im_start|>") != std::string::npos) {
         // chatml template
         for (auto message : chat) {

@@ -3,13 +3,6 @@ project("llama.cpp" C CXX)
 include(CheckIncludeFileCXX)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-inline")
-option(IO_HOOK "Enable IO hook" OFF)
-
-if(IO_HOOK)
-    add_definitions(-DIO_HOOK)
-endif()
-
 
 if (NOT XCODE AND NOT MSVC AND NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -114,7 +107,7 @@ option(LLAMA_VULKAN_CHECK_RESULTS            "llama: run Vulkan op checks"      
 option(LLAMA_VULKAN_DEBUG                    "llama: enable Vulkan debug output"                OFF)
 option(LLAMA_VULKAN_VALIDATE                 "llama: enable Vulkan validation"                  OFF)
 option(LLAMA_VULKAN_RUN_TESTS                "llama: run Vulkan tests"                          OFF)
-option(LLAMA_METAL                           "llama: use Metal"                                 OFF)
+option(LLAMA_METAL                           "llama: use Metal"                                 ${LLAMA_METAL_DEFAULT})
 option(LLAMA_METAL_NDEBUG                    "llama: disable Metal debugging"                   OFF)
 option(LLAMA_METAL_SHADER_DEBUG              "llama: compile Metal with -fno-fast-math"         OFF)
 option(LLAMA_METAL_EMBED_LIBRARY             "llama: embed Metal library"                       OFF)
@@ -125,9 +118,9 @@ option(LLAMA_SYCL                            "llama: use SYCL"                  
 option(LLAMA_SYCL_F16                        "llama: use 16 bit floats for sycl calculations"   OFF)
 option(LLAMA_CPU_HBM                         "llama: use memkind for CPU HBM"                   OFF)
 
-option(LLAMA_BUILD_TESTS                     "llama: build tests"    OFF)
-option(LLAMA_BUILD_EXAMPLES                  "llama: build examples" OFF)
-option(LLAMA_BUILD_SERVER                    "llama: build server example"                      OFF)
+option(LLAMA_BUILD_TESTS                     "llama: build tests"    ${LLAMA_STANDALONE})
+option(LLAMA_BUILD_EXAMPLES                  "llama: build examples" ${LLAMA_STANDALONE})
+option(LLAMA_BUILD_SERVER                    "llama: build server example"                      ON)
 
 # add perf arguments
 option(LLAMA_PERF                            "llama: enable perf"                               OFF)
@@ -1145,7 +1138,6 @@ target_compile_options(llama PRIVATE -U_FORTIFY_SOURCE)
 target_compile_options(llama PRIVATE -fno-stack-protector)
 target_include_directories(llama PUBLIC .)
 target_compile_features   (llama PUBLIC cxx_std_11) # don't bump
-
 
 target_link_libraries(llama PRIVATE
     ggml

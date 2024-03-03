@@ -112,6 +112,11 @@ typedef void * thread_ret_t;
 
 #include <sys/wait.h>
 
+
+// hooks
+#include "hook.h"
+
+
 void ggml_print_backtrace(void) {
     /*
     #include <execinfo.h>
@@ -384,17 +389,19 @@ int64_t ggml_time_us(void) {
 }
 #else
 void ggml_time_init(void) {}
-int64_t ggml_time_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec*1000 + (int64_t)ts.tv_nsec/1000000;
-}
+int64_t ggml_time_ms(void) {return 0;}
+// int64_t ggml_time_ms(void) {
+//     struct timespec ts;
+//     clock_gettime(CLOCK_MONOTONIC, &ts);
+//     return (int64_t)ts.tv_sec*1000 + (int64_t)ts.tv_nsec/1000000;
+// }
 
-int64_t ggml_time_us(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (int64_t)ts.tv_sec*1000000 + (int64_t)ts.tv_nsec/1000;
-}
+int64_t ggml_time_us(void) {return 0;}
+// int64_t ggml_time_us(void) {
+//     struct timespec ts;
+//     clock_gettime(CLOCK_MONOTONIC, &ts);
+//     return (int64_t)ts.tv_sec*1000000 + (int64_t)ts.tv_nsec/1000;
+// }
 #endif
 
 int64_t ggml_cycles(void) {
@@ -2040,103 +2047,106 @@ inline static void ggml_critical_section_end(void) {
 
 #if defined(__gnu_linux__)
 static cpu_set_t ggml_get_numa_affinity(void) {
-    cpu_set_t cpuset;
-    pthread_t thread;
-    thread = pthread_self();
-    CPU_ZERO(&cpuset);
-    pthread_getaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-    return cpuset;
 }
+// static cpu_set_t ggml_get_numa_affinity(void) {
+//     cpu_set_t cpuset;
+//     pthread_t thread;
+//     thread = pthread_self();
+//     CPU_ZERO(&cpuset);
+//     pthread_getaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
+//     return cpuset;
+// }
 #else
 static uint32_t ggml_get_numa_affinity(void) {
     return 0; // no NUMA support
 }
 #endif
 
-void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
-    if (g_state.numa.n_nodes > 0) {
-        fprintf(stderr, "ggml_numa_init: NUMA already initialized\n");
-
-        return;
-    }
-
-#if defined(__gnu_linux__)
-    struct stat st;
-    char path[256];
-    int rv;
-
-    // set numa scheme
-    g_state.numa.numa_strategy = numa_flag;
-
-    GGML_PRINT_DEBUG("numa strategy %u\n",g_state.numa.numa_strategy);
-
-    g_state.numa.cpuset = ggml_get_numa_affinity();
-
-    // enumerate nodes
-    while (g_state.numa.n_nodes < GGML_NUMA_MAX_NODES) {
-        rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u", g_state.numa.n_nodes);
-        GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
-        if (stat(path, &st) != 0) { break; }
-        ++g_state.numa.n_nodes;
-    }
-
-    // enumerate CPUs
-    while (g_state.numa.total_cpus < GGML_NUMA_MAX_CPUS) {
-        rv = snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%u", g_state.numa.total_cpus);
-        GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
-        if (stat(path, &st) != 0) { break; }
-        ++g_state.numa.total_cpus;
-    }
-
-    GGML_PRINT_DEBUG("found %u numa nodes, %u CPUs\n", g_state.numa.n_nodes, g_state.numa.total_cpus);
-
-    // figure out which node we're on
-    uint current_cpu;
-    int getcpu_ret = 0;
-#if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 28)
-    getcpu_ret = getcpu(&current_cpu, &g_state.numa.current_node);
-#else
-    // old glibc doesn't have a wrapper for this call. Fall back on direct syscall
-    getcpu_ret = syscall(SYS_getcpu,&current_cpu,&g_state.numa.current_node);
-#endif
-
-    if (g_state.numa.n_nodes < 1 || g_state.numa.total_cpus < 1 || getcpu_ret != 0) {
-        g_state.numa.n_nodes = 0;
-        return;
-    }
-
-    GGML_PRINT_DEBUG("found our process on numa node %u, CPU %u\n", g_state.numa.current_node, current_cpu);
-
-    for (uint32_t n = 0; n < g_state.numa.n_nodes; ++n) {
-        struct ggml_numa_node * node = &g_state.numa.nodes[n];
-        GGML_PRINT_DEBUG("CPUs on node %u:", n);
-        node->n_cpus = 0;
-        for (uint32_t c = 0; c < g_state.numa.total_cpus; ++c) {
-            rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u/cpu%u", n, c);
-            GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
-            if (stat(path, &st) == 0) {
-                node->cpus[node->n_cpus++] = c;
-                GGML_PRINT_DEBUG(" %u", c);
-            }
-        }
-        GGML_PRINT_DEBUG("\n");
-    }
-
-    if (ggml_is_numa()) {
-        FILE *fptr = fopen("/proc/sys/kernel/numa_balancing", "r");
-        if (fptr != NULL) {
-            char buf[42];
-            if (fgets(buf, sizeof(buf), fptr) && strncmp(buf, "0\n", sizeof(buf)) != 0) {
-                GGML_PRINT("WARNING: /proc/sys/kernel/numa_balancing is enabled, this has been observed to impair performance\n");
-            }
-            fclose(fptr);
-        }
-    }
-#else
-    GGML_UNUSED(numa_flag);
-    // TODO
-#endif
-}
+void ggml_numa_init(enum ggml_numa_strategy numa_flag) {}
+// void ggml_numa_init(enum ggml_numa_strategy numa_flag) {
+//     if (g_state.numa.n_nodes > 0) {
+//         fprintf(stderr, "ggml_numa_init: NUMA already initialized\n");
+//
+//         return;
+//     }
+//
+// #if defined(__gnu_linux__)
+//     struct stat st;
+//     char path[256];
+//     int rv;
+//
+//     // set numa scheme
+//     g_state.numa.numa_strategy = numa_flag;
+//
+//     GGML_PRINT_DEBUG("numa strategy %u\n",g_state.numa.numa_strategy);
+//
+//     g_state.numa.cpuset = ggml_get_numa_affinity();
+//
+//     // enumerate nodes
+//     while (g_state.numa.n_nodes < GGML_NUMA_MAX_NODES) {
+//         rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u", g_state.numa.n_nodes);
+//         GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
+//         if (stat(path, &st) != 0) { break; }
+//         ++g_state.numa.n_nodes;
+//     }
+//
+//     // enumerate CPUs
+//     while (g_state.numa.total_cpus < GGML_NUMA_MAX_CPUS) {
+//         rv = snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%u", g_state.numa.total_cpus);
+//         GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
+//         if (stat(path, &st) != 0) { break; }
+//         ++g_state.numa.total_cpus;
+//     }
+//
+//     GGML_PRINT_DEBUG("found %u numa nodes, %u CPUs\n", g_state.numa.n_nodes, g_state.numa.total_cpus);
+//
+//     // figure out which node we're on
+//     uint current_cpu;
+//     int getcpu_ret = 0;
+// #if __GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ > 28)
+//     getcpu_ret = getcpu(&current_cpu, &g_state.numa.current_node);
+// #else
+//     // old glibc doesn't have a wrapper for this call. Fall back on direct syscall
+//     getcpu_ret = syscall(SYS_getcpu,&current_cpu,&g_state.numa.current_node);
+// #endif
+//
+//     if (g_state.numa.n_nodes < 1 || g_state.numa.total_cpus < 1 || getcpu_ret != 0) {
+//         g_state.numa.n_nodes = 0;
+//         return;
+//     }
+//
+//     GGML_PRINT_DEBUG("found our process on numa node %u, CPU %u\n", g_state.numa.current_node, current_cpu);
+//
+//     for (uint32_t n = 0; n < g_state.numa.n_nodes; ++n) {
+//         struct ggml_numa_node * node = &g_state.numa.nodes[n];
+//         GGML_PRINT_DEBUG("CPUs on node %u:", n);
+//         node->n_cpus = 0;
+//         for (uint32_t c = 0; c < g_state.numa.total_cpus; ++c) {
+//             rv = snprintf(path, sizeof(path), "/sys/devices/system/node/node%u/cpu%u", n, c);
+//             GGML_ASSERT(rv > 0 && (unsigned)rv < sizeof(path));
+//             if (stat(path, &st) == 0) {
+//                 node->cpus[node->n_cpus++] = c;
+//                 GGML_PRINT_DEBUG(" %u", c);
+//             }
+//         }
+//         GGML_PRINT_DEBUG("\n");
+//     }
+//
+//     if (ggml_is_numa()) {
+//         FILE *fptr = fopen("/proc/sys/kernel/numa_balancing", "r");
+//         if (fptr != NULL) {
+//             char buf[42];
+//             if (fgets(buf, sizeof(buf), fptr) && strncmp(buf, "0\n", sizeof(buf)) != 0) {
+//                 GGML_PRINT("WARNING: /proc/sys/kernel/numa_balancing is enabled, this has been observed to impair performance\n");
+//             }
+//             fclose(fptr);
+//         }
+//     }
+// #else
+//     GGML_UNUSED(numa_flag);
+//     // TODO
+// #endif
+// }
 
 bool ggml_is_numa(void) {
     return g_state.numa.n_nodes > 1;
@@ -17059,70 +17069,74 @@ typedef pthread_t ggml_thread_t;
 // Android's libc implementation "bionic" does not support setting affinity
 #if defined(__gnu_linux__)
 static void set_numa_thread_affinity(int thread_n) {
-    if (!ggml_is_numa()) {
-        return;
-    }
-
-    int node_num;
-    int rv;
-    size_t setsize = CPU_ALLOC_SIZE(g_state.numa.total_cpus);
-
-    switch(g_state.numa.numa_strategy) {
-        case GGML_NUMA_STRATEGY_DISTRIBUTE:
-            // run thread on node_num thread_n / (threads per node)
-            node_num = thread_n % g_state.numa.n_nodes;
-            break;
-        case GGML_NUMA_STRATEGY_ISOLATE:
-            // run thread on current_node
-            node_num = g_state.numa.current_node;
-            break;
-        case GGML_NUMA_STRATEGY_NUMACTL:
-            // use the cpuset that numactl gave us
-            rv = pthread_setaffinity_np(pthread_self(), setsize, &g_state.numa.cpuset);
-            if (rv) {
-                fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n",strerror(rv));
-            }
-            return;
-        default:
-            return;
-    }
-
-    struct ggml_numa_node * node = &g_state.numa.nodes[node_num];
-
-    cpu_set_t * cpus = CPU_ALLOC(g_state.numa.total_cpus);
-    CPU_ZERO_S(setsize, cpus);
-    for (size_t i = 0; i < node->n_cpus; ++i) {
-        CPU_SET_S(node->cpus[i], setsize, cpus);
-    }
-
-    rv = pthread_setaffinity_np(pthread_self(), setsize, cpus);
-    if (rv) {
-            fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
-    }
-
-    CPU_FREE(cpus);
 }
+// static void set_numa_thread_affinity(int thread_n) {
+//     if (!ggml_is_numa()) {
+//         return;
+//     }
+//
+//     int node_num;
+//     int rv;
+//     size_t setsize = CPU_ALLOC_SIZE(g_state.numa.total_cpus);
+//
+//     switch(g_state.numa.numa_strategy) {
+//         case GGML_NUMA_STRATEGY_DISTRIBUTE:
+//             // run thread on node_num thread_n / (threads per node)
+//             node_num = thread_n % g_state.numa.n_nodes;
+//             break;
+//         case GGML_NUMA_STRATEGY_ISOLATE:
+//             // run thread on current_node
+//             node_num = g_state.numa.current_node;
+//             break;
+//         case GGML_NUMA_STRATEGY_NUMACTL:
+//             // use the cpuset that numactl gave us
+//             rv = pthread_setaffinity_np(pthread_self(), setsize, &g_state.numa.cpuset);
+//             if (rv) {
+//                 fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n",strerror(rv));
+//             }
+//             return;
+//         default:
+//             return;
+//     }
+//
+//     struct ggml_numa_node * node = &g_state.numa.nodes[node_num];
+//
+//     cpu_set_t * cpus = CPU_ALLOC(g_state.numa.total_cpus);
+//     CPU_ZERO_S(setsize, cpus);
+//     for (size_t i = 0; i < node->n_cpus; ++i) {
+//         CPU_SET_S(node->cpus[i], setsize, cpus);
+//     }
+//
+//     rv = pthread_setaffinity_np(pthread_self(), setsize, cpus);
+//     if (rv) {
+//             fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
+//     }
+//
+//     CPU_FREE(cpus);
+// }
 
 static void clear_numa_thread_affinity(void) {
-    if (!ggml_is_numa()) {
-        return;
-    }
-
-    size_t setsize = CPU_ALLOC_SIZE(g_state.numa.total_cpus);
-
-    cpu_set_t * cpus = CPU_ALLOC(g_state.numa.total_cpus);
-    CPU_ZERO_S(setsize, cpus);
-    for (unsigned i = 0; i < g_state.numa.total_cpus; ++i) {
-        CPU_SET_S(i, setsize, cpus);
-    }
-
-    int rv = pthread_setaffinity_np(pthread_self(), setsize, cpus);
-    if (rv) {
-        fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
-    }
-
-    CPU_FREE(cpus);
 }
+// static void clear_numa_thread_affinity(void) {
+//     if (!ggml_is_numa()) {
+//         return;
+//     }
+//
+//     size_t setsize = CPU_ALLOC_SIZE(g_state.numa.total_cpus);
+//
+//     cpu_set_t * cpus = CPU_ALLOC(g_state.numa.total_cpus);
+//     CPU_ZERO_S(setsize, cpus);
+//     for (unsigned i = 0; i < g_state.numa.total_cpus; ++i) {
+//         CPU_SET_S(i, setsize, cpus);
+//     }
+//
+//     int rv = pthread_setaffinity_np(pthread_self(), setsize, cpus);
+//     if (rv) {
+//         fprintf(stderr, "warning: pthread_setaffinity_np() failed: %s\n", strerror(rv));
+//     }
+//
+//     CPU_FREE(cpus);
+// }
 #else
 // TODO: Windows etc.
 // (the linux implementation may also work on BSD, someone should test)
@@ -19828,21 +19842,6 @@ static const size_t GGUF_TYPE_SIZE[GGUF_TYPE_COUNT] = {
 };
 static_assert(GGUF_TYPE_COUNT == 13, "GGUF_TYPE_COUNT != 13");
 
-static const char * GGUF_TYPE_NAME[GGUF_TYPE_COUNT] = {
-    [GGUF_TYPE_UINT8]   = "u8",
-    [GGUF_TYPE_INT8]    = "i8",
-    [GGUF_TYPE_UINT16]  = "u16",
-    [GGUF_TYPE_INT16]   = "i16",
-    [GGUF_TYPE_UINT32]  = "u32",
-    [GGUF_TYPE_INT32]   = "i32",
-    [GGUF_TYPE_FLOAT32] = "f32",
-    [GGUF_TYPE_BOOL]    = "bool",
-    [GGUF_TYPE_STRING]  = "str",
-    [GGUF_TYPE_ARRAY]   = "arr",
-    [GGUF_TYPE_UINT64]  = "u64",
-    [GGUF_TYPE_INT64]   = "i64",
-    [GGUF_TYPE_FLOAT64] = "f64",
-};
 static_assert(GGUF_TYPE_COUNT == 13, "GGUF_TYPE_COUNT != 13");
 
 union gguf_value {
@@ -19951,7 +19950,9 @@ static bool gguf_fread_str(FILE * file, struct gguf_str * p, size_t * offset) {
         return false;
     }
 
-    p->data = GGML_CALLOC(p->n + 1, 1);
+    // p->data = GGML_CALLOC(p->n + 1, 1);
+    p->data = GGML_MALLOC(p->n + 1);
+    memset(p->data, 0, p->n + 1);
 
     ok = ok && gguf_fread_el(file,  p->data, p->n, offset);
 
@@ -20353,6 +20354,21 @@ void gguf_free(struct gguf_context * ctx) {
 }
 
 const char * gguf_type_name(enum gguf_type type) {
+const char * GGUF_TYPE_NAME[GGUF_TYPE_COUNT] = {
+    [GGUF_TYPE_UINT8]   = "u8",
+    [GGUF_TYPE_INT8]    = "i8",
+    [GGUF_TYPE_UINT16]  = "u16",
+    [GGUF_TYPE_INT16]   = "i16",
+    [GGUF_TYPE_UINT32]  = "u32",
+    [GGUF_TYPE_INT32]   = "i32",
+    [GGUF_TYPE_FLOAT32] = "f32",
+    [GGUF_TYPE_BOOL]    = "bool",
+    [GGUF_TYPE_STRING]  = "str",
+    [GGUF_TYPE_ARRAY]   = "arr",
+    [GGUF_TYPE_UINT64]  = "u64",
+    [GGUF_TYPE_INT64]   = "i64",
+    [GGUF_TYPE_FLOAT64] = "f64",
+};
     return GGUF_TYPE_NAME[type];
 }
 
